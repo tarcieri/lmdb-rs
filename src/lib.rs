@@ -14,7 +14,7 @@ pub use cursor::Cursor;
 pub use database::Database;
 pub use environment::{Environment, EnvironmentBuilder};
 pub use error::{LmdbResult, LmdbError};
-pub use transaction::Transaction;
+pub use transaction::{ReadTransaction, WriteTransaction, RoTransaction, RwTransaction};
 
 macro_rules! lmdb_try {
     ($expr:expr) => ({

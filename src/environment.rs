@@ -7,7 +7,7 @@ use error::{LmdbError, LmdbResult, lmdb_result};
 use ffi;
 use ffi::MDB_env;
 use flags::EnvironmentFlags;
-use transaction::Transaction;
+use transaction::{RoTransaction, RwTransaction};
 
 /// An LMDB environment.
 ///
@@ -36,11 +36,15 @@ impl Environment {
         self.env
     }
 
-    /// Create a transaction for use with the environment.
-    ///
-    /// `flags` must either be empty, or `MDB_RDONLY` in order to specify a read-only transaction.
-    pub fn begin_txn<'a>(&'a self, flags: EnvironmentFlags) -> LmdbResult<Transaction<'a>> {
-        Transaction::new(self, flags)
+    /// Create a read-only transaction for use with the environment.
+    pub fn begin_read_txn<'env>(&'env self) -> LmdbResult<RoTransaction<'env>> {
+        RoTransaction::new(self)
+    }
+
+    /// Create a read-write transaction for use with the environment. This method will block while
+    /// there are any other read-write transactions open on the environment.
+    pub fn begin_write_txn<'env>(&'env self) -> LmdbResult<RwTransaction<'env>> {
+        RwTransaction::new(self)
     }
 
     /// Flush data buffers to disk.
@@ -197,22 +201,22 @@ mod test {
 
         {
             // Mutable env, mutable txn
-            assert!(env.begin_txn(flags::EnvironmentFlags::empty()).is_ok());
+            assert!(env.begin_write_txn().is_ok());
         } {
             // Mutable env, read-only txn
-            assert!(env.begin_txn(flags::MDB_RDONLY).is_ok());
+            assert!(env.begin_read_txn().is_ok());
         } {
             // Read-only env, mutable txn
             let env = Environment::new().set_flags(flags::MDB_RDONLY)
                                         .open(dir.path(), io::USER_RWX)
                                         .unwrap();
-            assert!(env.begin_txn(flags::EnvironmentFlags::empty()).is_err());
+            assert!(env.begin_write_txn().is_err());
         } {
             // Read-only env, read-only txn
             let env = Environment::new().set_flags(flags::MDB_RDONLY)
                                         .open(dir.path(), io::USER_RWX)
                                         .unwrap();
-            assert!(env.begin_txn(flags::MDB_RDONLY).is_ok());
+            assert!(env.begin_read_txn().is_ok());
         }
     }
 

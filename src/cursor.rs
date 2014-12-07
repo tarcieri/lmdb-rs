@@ -9,44 +9,20 @@ use ffi::{MDB_cursor, mdb_cursor_open, MDB_cursor_op, MDB_val};
 use flags::WriteFlags;
 use transaction::Transaction;
 
-/// A cursor for navigating within a database.
-pub struct Cursor<'txn> {
-    cursor: *mut MDB_cursor,
-    _no_sync: marker::NoSync,
-    _no_send: marker::NoSend,
-    _contravariant: marker::ContravariantLifetime<'txn>,
+
+/// An LMDB cursor.
+pub trait Cursor<'txn> {
+    /// Returns a raw pointer to the underlying LMDB cursor.
+    ///
+    /// The caller **must** ensure that the pointer is not used after the lifetime of the cursor.
+    fn cursor(&self) -> *mut MDB_cursor;
 }
 
-#[unsafe_destructor]
-impl <'txn> Drop for Cursor<'txn> {
-    fn drop(&mut self) {
-        unsafe { ffi::mdb_cursor_close(self.cursor) }
-    }
-}
-
-impl <'txn> Cursor<'txn> {
-
-    /// Creates a new cursor into the given database in the given transaction. Prefer using
-    /// `Transaction::open_cursor()`.
-    #[doc(hidden)]
-    pub fn new(txn: &'txn Transaction, db: Database) -> LmdbResult<Cursor<'txn>> {
-        let mut cursor: *mut MDB_cursor = ptr::null_mut();
-        unsafe { try!(lmdb_result(mdb_cursor_open(txn.txn(), db.dbi(), &mut cursor))); }
-        Ok(Cursor {
-            cursor: cursor,
-            _no_sync: marker::NoSync,
-            _no_send: marker::NoSend,
-            _contravariant: marker::ContravariantLifetime::<'txn>,
-        })
-    }
-
-    pub fn cursor(&self) -> *mut MDB_cursor {
-        self.cursor
-    }
+pub trait ReadCursor<'txn> : Cursor<'txn> {
 
     /// Retrieves a key/data pair from the cursor. Depending on the cursor op, the current key is
     /// returned.
-    pub fn get(&self,
+    fn get(&self,
                key: Option<&[u8]>,
                data: Option<&[u8]>,
                op: MDB_cursor_op)
@@ -55,7 +31,7 @@ impl <'txn> Cursor<'txn> {
             let mut key_val = slice_to_val(key);
             let mut data_val = slice_to_val(data);
             let key_ptr = key_val.mv_data;
-            try!(lmdb_result(ffi::mdb_cursor_get(self.cursor,
+            try!(lmdb_result(ffi::mdb_cursor_get(self.cursor(),
                                                  &mut key_val,
                                                  &mut data_val,
                                                  op)));
@@ -64,14 +40,17 @@ impl <'txn> Cursor<'txn> {
             Ok((key_out, data_out))
         }
     }
+}
+
+pub trait WriteCursor<'txn> : ReadCursor<'txn> {
 
     /// Puts a key/data pair into the database. The cursor will be positioned at the new data item,
     /// or on failure usually near it.
-    pub fn put(&self,
-               key: &[u8],
-               data: &[u8],
-               flags: WriteFlags)
-               -> LmdbResult<()> {
+    fn put(&self,
+           key: &[u8],
+           data: &[u8],
+           flags: WriteFlags)
+           -> LmdbResult<()> {
 
         let mut key_val: ffi::MDB_val = ffi::MDB_val { mv_size: key.len() as size_t,
                                                        mv_data: key.as_ptr() as *mut c_void };
@@ -92,10 +71,91 @@ impl <'txn> Cursor<'txn> {
     ///
     /// `MDB_NODUPDATA` may be used to delete all data items for the current key, if the database
     /// was opened with `MDB_DUPSORT`.
-    pub fn del(&self, flags: WriteFlags) -> LmdbResult<()> {
+    fn del(&self, flags: WriteFlags) -> LmdbResult<()> {
         unsafe {
             lmdb_result(ffi::mdb_cursor_del(self.cursor(), flags.bits()))
         }
+    }
+}
+
+/// A read-only cursor for navigating items within a database.
+pub struct RoCursor<'txn> {
+    cursor: *mut MDB_cursor,
+    _no_sync: marker::NoSync,
+    _no_send: marker::NoSend,
+    _contravariant: marker::ContravariantLifetime<'txn>,
+}
+
+impl <'txn> Cursor<'txn> for RoCursor<'txn> {
+    fn cursor(&self) -> *mut MDB_cursor {
+        self.cursor
+    }
+}
+
+impl <'txn> ReadCursor<'txn> for RoCursor<'txn> { }
+
+#[unsafe_destructor]
+impl <'txn> Drop for RoCursor<'txn> {
+    fn drop(&mut self) {
+        unsafe { ffi::mdb_cursor_close(self.cursor) }
+    }
+}
+
+impl <'txn> RoCursor<'txn> {
+
+    /// Creates a new read-only cursor in the given database and transaction. Prefer using
+    /// `Transaction::open_cursor()`.
+    #[doc(hidden)]
+    pub fn new(txn: &'txn Transaction, db: Database) -> LmdbResult<RoCursor<'txn>> {
+        let mut cursor: *mut MDB_cursor = ptr::null_mut();
+        unsafe { try!(lmdb_result(mdb_cursor_open(txn.txn(), db.dbi(), &mut cursor))); }
+        Ok(RoCursor {
+            cursor: cursor,
+            _no_sync: marker::NoSync,
+            _no_send: marker::NoSend,
+            _contravariant: marker::ContravariantLifetime::<'txn>,
+        })
+    }
+}
+
+/// A read-only cursor for navigating items within a database.
+pub struct RwCursor<'txn> {
+    cursor: *mut MDB_cursor,
+    _no_sync: marker::NoSync,
+    _no_send: marker::NoSend,
+    _contravariant: marker::ContravariantLifetime<'txn>,
+}
+
+impl <'txn> Cursor<'txn> for RwCursor<'txn> {
+    fn cursor(&self) -> *mut MDB_cursor {
+        self.cursor
+    }
+}
+
+impl <'txn> ReadCursor<'txn> for RwCursor<'txn> { }
+impl <'txn> WriteCursor<'txn> for RwCursor<'txn> { }
+
+#[unsafe_destructor]
+impl <'txn> Drop for RwCursor<'txn> {
+    fn drop(&mut self) {
+        unsafe { ffi::mdb_cursor_close(self.cursor) }
+    }
+}
+
+impl <'txn> RwCursor<'txn> {
+
+    /// Creates a new read-only cursor in the given database and transaction. Prefer using
+    /// `WriteTransaction::open_write_cursor()`.
+    #[doc(hidden)]
+    pub fn new(txn: &'txn Transaction, db: Database) -> LmdbResult<RwCursor<'txn>> {
+        let mut cursor: *mut MDB_cursor = ptr::null_mut();
+        unsafe { try!(lmdb_result(mdb_cursor_open(txn.txn(), db.dbi(), &mut cursor))); }
+        Ok(RwCursor {
+            cursor: cursor,
+            _no_sync: marker::NoSync,
+            _no_send: marker::NoSend,
+            _contravariant: marker::ContravariantLifetime::<'txn>,
+        })
     }
 }
 
@@ -123,6 +183,7 @@ mod test {
     use libc::{c_void, size_t};
     use std::{io, ptr};
 
+    use transaction::*;
     use environment::*;
     use error::{LmdbResult, lmdb_result};
     use flags::*;
@@ -135,13 +196,13 @@ mod test {
         let dir = io::TempDir::new("test").unwrap();
         let env = Environment::new().open(dir.path(), io::USER_RWX).unwrap();
 
-        let mut txn = env.begin_txn(EnvironmentFlags::empty()).unwrap();
-        let db = txn.open_db(None, DatabaseFlags::empty()).unwrap();
+        let mut txn = env.begin_write_txn().unwrap();
+        let db = txn.open_uniq_db(None, DatabaseFlags::empty()).unwrap();
         txn.put(db, b"key1", b"val1", WriteFlags::empty()).unwrap();
         txn.put(db, b"key2", b"val2", WriteFlags::empty()).unwrap();
         txn.put(db, b"key3", b"val3", WriteFlags::empty()).unwrap();
 
-        let cursor = txn.open_cursor(db).unwrap();
+        let cursor = txn.open_read_cursor(db).unwrap();
         assert_eq!((Some(b"key1"), b"val1"),
                    cursor.get(None, None, MDB_cursor_op::MDB_FIRST).unwrap());
         assert_eq!((Some(b"key1"), b"val1"),
@@ -165,8 +226,8 @@ mod test {
         let dir = io::TempDir::new("test").unwrap();
         let env = Environment::new().open(dir.path(), io::USER_RWX).unwrap();
 
-        let mut txn = env.begin_txn(EnvironmentFlags::empty()).unwrap();
-        let db = txn.open_db(None, MDB_DUPSORT).unwrap();
+        let mut txn = env.begin_write_txn().unwrap();
+        let db = txn.open_dup_db(None, MDB_DUPSORT).unwrap();
         txn.put(db, b"key1", b"val1", WriteFlags::empty()).unwrap();
         txn.put(db, b"key1", b"val2", WriteFlags::empty()).unwrap();
         txn.put(db, b"key1", b"val3", WriteFlags::empty()).unwrap();
@@ -174,7 +235,7 @@ mod test {
         txn.put(db, b"key2", b"val2", WriteFlags::empty()).unwrap();
         txn.put(db, b"key2", b"val3", WriteFlags::empty()).unwrap();
 
-        let cursor = txn.open_cursor(db).unwrap();
+        let cursor = txn.open_read_cursor(db).unwrap();
         assert_eq!((Some(b"key1"), b"val1"),
                    cursor.get(None, None, MDB_cursor_op::MDB_FIRST).unwrap());
         assert_eq!((None, b"val1"),
@@ -211,8 +272,8 @@ mod test {
         let dir = io::TempDir::new("test").unwrap();
         let env = Environment::new().open(dir.path(), io::USER_RWX).unwrap();
 
-        let mut txn = env.begin_txn(EnvironmentFlags::empty()).unwrap();
-        let db = txn.open_db(None, MDB_DUPSORT | MDB_DUPFIXED).unwrap();
+        let mut txn = env.begin_write_txn().unwrap();
+        let db = txn.open_dup_db(None, MDB_DUPSORT | MDB_DUPFIXED).unwrap();
         txn.put(db, b"key1", b"val1", WriteFlags::empty()).unwrap();
         txn.put(db, b"key1", b"val2", WriteFlags::empty()).unwrap();
         txn.put(db, b"key1", b"val3", WriteFlags::empty()).unwrap();
@@ -220,7 +281,7 @@ mod test {
         txn.put(db, b"key2", b"val5", WriteFlags::empty()).unwrap();
         txn.put(db, b"key2", b"val6", WriteFlags::empty()).unwrap();
 
-        let cursor = txn.open_cursor(db).unwrap();
+        let cursor = txn.open_read_cursor(db).unwrap();
         assert_eq!((Some(b"key1"), b"val1"),
                    cursor.get(None, None, MDB_cursor_op::MDB_FIRST).unwrap());
         assert_eq!((None, b"val1val2val3"),
@@ -263,8 +324,8 @@ mod test {
             }
         }
 
-        let mut txn = env.begin_txn(EnvironmentFlags::empty()).unwrap();
-        let db = txn.open_db(None, MDB_DUPSORT | MDB_DUPFIXED).unwrap();
+        let mut txn = env.begin_write_txn().unwrap();
+        let db = txn.open_dup_db(None, MDB_DUPSORT | MDB_DUPFIXED).unwrap();
         txn.put(db, b"key1", b"val1", WriteFlags::empty()).unwrap();
         txn.put(db, b"key1", b"val2", WriteFlags::empty()).unwrap();
         txn.put(db, b"key1", b"val3", WriteFlags::empty()).unwrap();
@@ -275,7 +336,7 @@ mod test {
         txn.put(db, b"key3", b"val8", WriteFlags::empty()).unwrap();
         txn.put(db, b"key3", b"val9", WriteFlags::empty()).unwrap();
 
-        let cursor = txn.open_cursor(db).unwrap();
+        let cursor = txn.open_read_cursor(db).unwrap();
         assert!(sets_key(&cursor, None, None, MDB_cursor_op::MDB_FIRST).unwrap());
         assert!(!sets_key(&cursor, None, None, MDB_cursor_op::MDB_FIRST_DUP).unwrap());
         assert!(!sets_key(&cursor, Some(b"key2"), Some(b"val5"), MDB_cursor_op::MDB_GET_BOTH).unwrap());
@@ -304,9 +365,9 @@ mod test {
         let dir = io::TempDir::new("test").unwrap();
         let env = Environment::new().open(dir.path(), io::USER_RWX).unwrap();
 
-        let mut txn = env.begin_txn(EnvironmentFlags::empty()).unwrap();
-        let db = txn.open_db(None, DatabaseFlags::empty()).unwrap();
-        let cursor = txn.open_cursor(db).unwrap();
+        let mut txn = env.begin_write_txn().unwrap();
+        let db = txn.open_uniq_db(None, DatabaseFlags::empty()).unwrap();
+        let cursor = txn.open_write_cursor(db).unwrap();
 
         cursor.put(b"key1", b"val1", WriteFlags::empty()).unwrap();
         cursor.put(b"key2", b"val2", WriteFlags::empty()).unwrap();
