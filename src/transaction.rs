@@ -43,7 +43,7 @@ pub trait ReadTransaction<'env> : Transaction<'env> {
     ///
     /// A transaction that uses this function must finish (either commit or abort) before any other
     /// transaction may use the function.
-    fn open_uniq_db(&self, name: Option<&str>, flags: DatabaseFlags) -> LmdbResult<Database<'env>> {
+    fn open_uniq_db<'a, 'b>(&'a self, name: Option<&'b str>, flags: DatabaseFlags) -> LmdbResult<Database<'env>> {
         Database::open_uniq(self, name, flags)
     }
 
