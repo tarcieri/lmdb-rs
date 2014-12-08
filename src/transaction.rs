@@ -59,7 +59,7 @@ pub trait ReadTransaction<'env> : Transaction<'env> {
     /// This function retrieves the data associated with the given key in the database. If the
     /// database supports duplicate keys (`MDB_DUPSORT`) then the first data item for the key will
     /// be returned. Retrieval of other items requires the use of `Transaction::cursor_get`.
-    fn get<'txn>(&'txn self, database: Database, key: &[u8]) -> LmdbResult<&'txn [u8]> {
+    fn get<'txn: 'env, 'a>(&'txn self, database: Database, key: &'a [u8]) -> LmdbResult<&'txn [u8]> {
         let mut key_val: ffi::MDB_val = ffi::MDB_val { mv_size: key.len() as size_t,
                                                        mv_data: key.as_ptr() as *mut c_void };
         let mut data_val: ffi::MDB_val = ffi::MDB_val { mv_size: 0,
