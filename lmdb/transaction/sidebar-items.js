@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["InactiveTransaction","An inactive read-only transaction."],["RoTransaction","An LMDB read-only transaction."],["RwTransaction","An LMDB read-write transaction."]],"trait":[["Transaction","An LMDB transaction.All database operations require a transaction."]]});

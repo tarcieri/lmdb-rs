@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["Environment","An LMDB environment.An environment supports multiple databases, all residing in the same shared-memory map."],["EnvironmentBuilder","Options for opening or creating an environment."]]});

@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["Database","A handle to an individual database in an environment.A database handle denotes the name and parameters of a database in an environment."]]});
